@@ -3,6 +3,7 @@ const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const express = require('express');
 const fs = require('fs');
+const https = require('https');
 
 // Crear servidor Express para mantener activo el servicio
 const app = express();
@@ -12,13 +13,17 @@ let qrCodeData = null;
 let isConnected = false;
 let botStatus = 'Iniciando...';
 
+// Middleware básico
+app.use(express.json());
+
 // Ruta de salud para Render
 app.get('/', (req, res) => {
     res.json({
         status: 'online',
         bot: isConnected ? 'conectado' : 'desconectado',
         message: botStatus,
-        uptime: process.uptime()
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString()
     });
 });
 
@@ -185,19 +190,133 @@ app.get('/status', (req, res) => {
         connected: isConnected,
         status: botStatus,
         hasQR: qrCodeData !== null,
+        uptime: process.uptime(),
+        lastPing: new Date().toISOString()
+    });
+});
+
+// Ruta de health check específica para monitoreo
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'healthy',
+        service: 'ArletteBot',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        botConnected: isConnected
+    });
+});
+
+// Ruta de ping interno
+app.get('/ping', (req, res) => {
+    res.json({ 
+        pong: true, 
+        timestamp: new Date().toISOString(),
         uptime: process.uptime()
     });
 });
 
-// Iniciar servidor Express primero
+// =============================================================================
+// SISTEMA DE AUTO-PING PARA EVITAR QUE RENDER SE DUERMA
+// =============================================================================
+
+class KeepAliveManager {
+    constructor() {
+        this.pingInterval = null;
+        this.lastPingTime = null;
+        this.pingCount = 0;
+    }
+
+    start() {
+        console.log('🔄 Iniciando sistema de auto-ping...');
+        
+        // Ping cada 8 minutos (480,000 ms)
+        this.pingInterval = setInterval(() => {
+            this.pingSelf();
+        }, 8 * 60 * 1000);
+
+        // Primer ping inmediato
+        setTimeout(() => this.pingSelf(), 5000);
+        
+        console.log('✅ Sistema de auto-ping activado (cada 8 minutos)');
+    }
+
+    async pingSelf() {
+        try {
+            const url = `http://localhost:${PORT}/ping`;
+            const response = await fetch(url);
+            const data = await response.json();
+            
+            this.lastPingTime = new Date();
+            this.pingCount++;
+            
+            console.log(`📡 Auto-ping #${this.pingCount} - ${this.lastPingTime.toLocaleTimeString()}`);
+            
+        } catch (error) {
+            console.error('❌ Error en auto-ping:', error.message);
+        }
+    }
+
+    stop() {
+        if (this.pingInterval) {
+            clearInterval(this.pingInterval);
+            console.log('🛑 Sistema de auto-ping detenido');
+        }
+    }
+
+    getStatus() {
+        return {
+            active: this.pingInterval !== null,
+            lastPing: this.lastPingTime,
+            totalPings: this.pingCount
+        };
+    }
+}
+
+// Crear instancia del gestor de keep-alive
+const keepAliveManager = new KeepAliveManager();
+
+// =============================================================================
+// INICIALIZACIÓN DEL SERVIDOR
+// =============================================================================
+
+// Iniciar servidor Express
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
     console.log(`🌐 Servidor web iniciado en puerto ${PORT}`);
     console.log(`📱 Visita /qr para ver el código QR`);
+    console.log(`❤️  Ruta de health: /health`);
+    console.log(`🔄 Auto-ping activado`);
     console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 });
 
-// Función principal del bot
+// Iniciar sistema de auto-ping después de que el servidor esté listo
+server.on('listening', () => {
+    setTimeout(() => {
+        keepAliveManager.start();
+    }, 3000);
+});
+
+// Ruta para ver estado del sistema de keep-alive
+app.get('/keep-alive-status', (req, res) => {
+    res.json({
+        keepAlive: keepAliveManager.getStatus(),
+        server: {
+            port: PORT,
+            uptime: process.uptime(),
+            memory: process.memoryUsage()
+        },
+        bot: {
+            connected: isConnected,
+            status: botStatus
+        }
+    });
+});
+
+// =============================================================================
+// FUNCIÓN PRINCIPAL DEL BOT
+// =============================================================================
+
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     const { version } = await fetchLatestBaileysVersion();
@@ -308,6 +427,32 @@ async function startBot() {
     });
 }
 
+// =============================================================================
+// MANEJO DE APAGADO GRACIAL
+// =============================================================================
+
+process.on('SIGINT', () => {
+    console.log('\n🛑 Apagando ArletteBot...');
+    keepAliveManager.stop();
+    server.close(() => {
+        console.log('✅ Servidor cerrado correctamente');
+        process.exit(0);
+    });
+});
+
+process.on('SIGTERM', () => {
+    console.log('\n🛑 Render está apagando la instancia...');
+    keepAliveManager.stop();
+    server.close(() => {
+        console.log('✅ Servidor cerrado correctamente');
+        process.exit(0);
+    });
+});
+
+// =============================================================================
+// INICIO DE LA APLICACIÓN
+// =============================================================================
+
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 console.log('🤖 Iniciando ArletteBot...');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -318,4 +463,4 @@ setTimeout(() => {
         console.error('❌ Error al iniciar bot:', err);
         botStatus = 'Error al iniciar';
     });
-}, 1000);
+}, 2000);
