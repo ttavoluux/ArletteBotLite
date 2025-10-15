@@ -1,17 +1,22 @@
 {
-  "name": "mainbotws",
+  "name": "arlette-bot",
   "version": "1.0.0",
+  "description": "Bot de WhatsApp simple con comando .todos",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "keywords": ["whatsapp", "bot", "baileys"],
+  "author": "Tu nombre",
+  "license": "MIT",
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.20",
-    "pino": "^10.0.0",
-    "qrcode-terminal": "^0.12.0"
+    "@whiskeysockets/baileys": "^6.7.8",
+    "pino": "^8.19.0",
+    "qrcode-terminal": "^0.12.0",
+    "qrcode": "^1.5.3",
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
